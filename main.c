@@ -19,17 +19,25 @@ extern uint32_t SystemCoreClock; // system clock frequency
 
 volatile int timer_lock = 0;
 
-// TODO: semaphore with 5 second timer
-void lock_init() {
-
-}
-
 void lock_release() {
-    __disable_irq();
     timer_lock = 0;
-    __enable_irq();
     return;
 }
+
+// TODO: semaphore with 5 second timer
+// timer 2 IRQ handler (not important, toggles LED)
+void  __attribute__((interrupt("IRQ"))) TIM2_IRQHandler()
+{
+    // Release semaphore lock
+	lock_release();
+    printf("Lock released\r\n");
+
+    // clear interrupt flag
+	TIM2->SR &= ~TIM_SR_UIF;
+    
+}
+
+
 
 void lock_acquire() {
     int check = 1;
@@ -39,6 +47,12 @@ void lock_acquire() {
         __disable_irq();
         if(timer_lock == 0) {
            timer_lock = 1;
+
+            printf("Lock acquired!!!!\r\n");
+            // Start timer
+            TIM2->CNT = 0;
+            TIM2->CR1 |= TIM_CR1_CEN;
+
            check = 0;
         }
         // Enable interrupts again
@@ -48,22 +62,48 @@ void lock_acquire() {
 }
 
 
+void setup_timer() {
+    // Enable TIM2
+    RCC->APB1ENR |= RCC_APB1ENR_TIM2EN;
+
+    // Prescaler: 16 MHz / 1600 = 10 kHz
+    TIM2->PSC = 1600 - 1;
+
+    // Auto-reload: 10 kHz * 5 s = 50,000
+    TIM2->ARR = 50000 - 1;
+
+    TIM2->CR1 |= TIM_CR1_OPM;
+
+    // Enable update interrupt
+    TIM2->DIER |= TIM_DIER_UIE;
+
+	TIM2->SR &= ~TIM_SR_UIF;
+
+    // Enable TIM2 interrupt in NVIC
+    NVIC_EnableIRQ(TIM2_IRQn);
+
+}
+
+
 int main()
 {
-
-	int now = 0, old = 1; // variables
-
 	// enable GPIOC clock
 	RCC->AHB1ENR |= RCC_AHB1ENR_GPIOCEN;
 
-	// configure user button (PC13) as pull-up input
-	bits_val(GPIOC->PUPDR, 2, 13, 1);
+	// configure user button (PC13) as pull-down input
+    // TODO: initialize 4 buttons
+	bits_val(GPIOC->PUPDR, 2, 13, 2);
+	//GPIOC->PUPDR &= ~(3U << (13 * 1));
+	//GPIOC->PUPDR |=  (1U << (13 * 1));
+
 
 	// enable GPIOA clock
 	RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN;
-
 	// enable USART2 clock
 	RCC->APB1ENR |= RCC_APB1ENR_USART2EN;
+
+
+    setup_timer();
 
 	// set PA2 & PA3 alternate functions to AF7 (USART2 RX/TX)
 	bits_val(GPIOA->AFR[0], 4, 2, 7); // PA2 -> USART2_TX
@@ -78,17 +118,28 @@ int main()
 	while (1)
 	{
 		// wait for button state to change
-		if ((now = bit_get(GPIOC->IDR, 13)) != old) {
-            old = now;
-            if(!timer_lock) {
-                printf("Trying to acquire lock\r\n");
-                lock_acquire();
-            } else {
-                printf("Trying to release lock\r\n");
-                lock_release();
-            }
+
+  
+        int button_prev = 1;
+		int button_now = bit_get(GPIOC->IDR, 13);
+
+        
+		if (button_prev != button_now && button_now == 0) {
+            printf("Button now: %d and Button prev: %d\r\n", button_now, button_prev);
+            
+            lock_acquire();
+
+            // if(!timer_lock) {
+            //     printf("Trying to acquire lock\r\n");
+            //     lock_acquire();
+            // } else {
+            //     printf("Trying to release lock\r\n");
+            //     lock_release();
+            // }
 		}
-        printf("Lock status: %d\r\n", timer_lock);
-        sleep(1);
+
+        button_prev = button_now;
+        // printf("Lock status: %d\r\n", timer_lock);
+        // sleep(1);
 	}
 }
