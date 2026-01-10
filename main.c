@@ -11,37 +11,45 @@ extern uint32_t SystemCoreClock; // system clock frequency
 	(((SystemCoreClock/((bps)*16)) << 4) | ((SystemCoreClock/(bps)) % 16))
 
 // All the possible states for the system
-#define IDLE = 0
-#define CONFIG = 1
-#define MODULATE = 2
+#define CONFIG 0
+#define IDLE 1
+#define MODULATE 2
+#define REDUCE 3
+#define TEST 4
 
 // Setup structs for input buttons
 typedef struct ButtonState {
     uint8_t button_prev;
     uint8_t button_now;
     uint8_t pin;
+    uint8_t status;
 } ButtonState;
-
-// typedef struct IdleButton {
-//     uint8_t button_prev;
-//     uint8_t button_pr;
-//     uint32_t mask;
-// } IdleButton;
-
-// typedef struct ModulateButton {
-//     uint8_t button_prev;
-//     uint8_t button_now;
-//     uint32_t mask;
-// } ModulateButton;
-
-// typedef struct ReduceButton {
-//     uint8_t button_prev;
-//     uint8_t button_now;
-//     uint32_t mask;
-// } ReduceButton;
 
 // Semaphore
 volatile int timer_lock = 0;
+
+void status_print(uint8_t status) {
+
+    printf("STATUS: %d\r\n");
+
+    switch (status) {
+        case CONFIG:
+            printf("State: CONFIG\r\n");
+            break;
+        case IDLE:
+            printf("State: IDLE\r\n");
+            break;
+        case MODULATE:
+            printf("State: MODULATE\r\n");
+            break;
+        case REDUCE:
+            printf("State: REDUCE\r\n");
+            break;
+        case TEST:
+            printf("State: TEST\r\n");
+            break;
+    }
+}
 
 // Function to release semaphore
 void lock_release() {
@@ -61,8 +69,6 @@ void  __attribute__((interrupt("IRQ"))) TIM2_IRQHandler()
 	TIM2->SR &= ~TIM_SR_UIF;
     
 }
-
-
 
 void lock_acquire() {
     int check = 1;
@@ -113,23 +119,23 @@ ButtonState *setup_buttons(ButtonState *states) {
     // TODO: initialize 4 buttons
     
     ButtonState configButton = {
-        1, 1, 8
+        1, 1, 8, 0
     };
 
     ButtonState idleButton = {
-        1, 1, 9
+        1, 1, 9, 1
     };
     
     ButtonState modulateButton = {
-        1, 1, 6
+        1, 1, 6, 2
     };
     
     ButtonState reduceButton = {
-        1, 1, 5
+        1, 1, 5, 3
     };
 
     ButtonState userButton = {
-        1, 1, 13
+        1, 1, 13, 4
     };
 
 
@@ -197,14 +203,17 @@ int main()
 	{
 		// wait for button state to change
 
-  
-        states[0].button_now = GPIOC->IDR & (1 << states[0].pin) ? 1 : 0;
-        // states[1].button_now = GPIOC->IDR & (1<<13) ? 1 : 0;
+        for (int i=0; i<1; i++) {
+            states[i].button_now = GPIOC->IDR & (1 << states[i].pin) ? 1 : 0;
 
-		if (states[0].button_prev == 1  && states[0].button_now == 0) {            
-            lock_acquire();
-		}
+            if (states[i].button_prev == 1  && states[i].button_now == 0) {            
+               lock_acquire();
+               status_print((uint8_t)states[i].status);
+                
+            }
 
-    states[0].button_prev = states[0].button_now;
+            states[0].button_prev = states[0].button_now;
+        }
 	}
+
 }
