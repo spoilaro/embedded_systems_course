@@ -72,16 +72,28 @@ void setup_timer() {
     // Auto-reload: 10 kHz * 5 s = 50,000
     TIM2->ARR = 50000 - 1;
 
-    TIM2->CR1 |= TIM_CR1_OPM;
+    // One-pulse mode
+    TIM2->CR1 |= TIM_CR1_OPM | TIM_CR1_URS;
 
-    // Enable update interrupt
+    // Enable update interrupt, clear interrupt flag, and reset counter
     TIM2->DIER |= TIM_DIER_UIE;
-
 	TIM2->SR &= ~TIM_SR_UIF;
-
+    TIM2->CNT = 0;
+    
     // Enable TIM2 interrupt in NVIC
     NVIC_EnableIRQ(TIM2_IRQn);
+}
 
+void setup_buttons() {
+    // configure user button (PC13) as pull-down input
+    // TODO: initialize 4 buttons
+
+    GPIOC->MODER |= (0<<27); // Set PIN13 as input
+    GPIOC->MODER |= (0<<26);
+
+    GPIOC->PUPDR |= (1<<26); // Set PIN13 as pull-up
+    GPIOC->PUPDR |= (0<<27);
+    
 }
 
 
@@ -89,21 +101,19 @@ int main()
 {
 	// enable GPIOC clock
 	RCC->AHB1ENR |= RCC_AHB1ENR_GPIOCEN;
-
-	// configure user button (PC13) as pull-down input
-    // TODO: initialize 4 buttons
-	bits_val(GPIOC->PUPDR, 2, 13, 2);
-	//GPIOC->PUPDR &= ~(3U << (13 * 1));
-	//GPIOC->PUPDR |=  (1U << (13 * 1));
-
-
 	// enable GPIOA clock
 	RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN;
 	// enable USART2 clock
 	RCC->APB1ENR |= RCC_APB1ENR_USART2EN;
 
+        
+    // Temp
+    GPIOA->MODER |= (1<<10); // Set PIN5 as output
 
+
+    
     setup_timer();
+    setup_buttons();
 
 	// set PA2 & PA3 alternate functions to AF7 (USART2 RX/TX)
 	bits_val(GPIOA->AFR[0], 4, 2, 7); // PA2 -> USART2_TX
@@ -115,31 +125,19 @@ int main()
 	USART2->BRR  = baud(115200);
 	USART2->CR1 |= USART_CR1_UE | USART_CR1_RE | USART_CR1_TE;
 
+    int button_prev = 1;
+
 	while (1)
 	{
 		// wait for button state to change
 
   
-        int button_prev = 1;
-		int button_now = bit_get(GPIOC->IDR, 13);
+        int button_now = GPIOC->IDR & (1<<13) ? 1 : 0;
 
-        
-		if (button_prev != button_now && button_now == 0) {
-            printf("Button now: %d and Button prev: %d\r\n", button_now, button_prev);
-            
+		if (button_prev == 1  && button_now == 0) {            
             lock_acquire();
-
-            // if(!timer_lock) {
-            //     printf("Trying to acquire lock\r\n");
-            //     lock_acquire();
-            // } else {
-            //     printf("Trying to release lock\r\n");
-            //     lock_release();
-            // }
 		}
 
-        button_prev = button_now;
-        // printf("Lock status: %d\r\n", timer_lock);
-        // sleep(1);
+    button_prev = button_now;
 	}
 }
