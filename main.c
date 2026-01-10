@@ -15,10 +15,35 @@ extern uint32_t SystemCoreClock; // system clock frequency
 #define CONFIG = 1
 #define MODULATE = 2
 
+// Setup structs for input buttons
+typedef struct ButtonState {
+    uint8_t button_prev;
+    uint8_t button_now;
+    uint8_t pin;
+} ButtonState;
 
+// typedef struct IdleButton {
+//     uint8_t button_prev;
+//     uint8_t button_pr;
+//     uint32_t mask;
+// } IdleButton;
 
+// typedef struct ModulateButton {
+//     uint8_t button_prev;
+//     uint8_t button_now;
+//     uint32_t mask;
+// } ModulateButton;
+
+// typedef struct ReduceButton {
+//     uint8_t button_prev;
+//     uint8_t button_now;
+//     uint32_t mask;
+// } ReduceButton;
+
+// Semaphore
 volatile int timer_lock = 0;
 
+// Function to release semaphore
 void lock_release() {
     timer_lock = 0;
     return;
@@ -84,16 +109,61 @@ void setup_timer() {
     NVIC_EnableIRQ(TIM2_IRQn);
 }
 
-void setup_buttons() {
-    // configure user button (PC13) as pull-down input
+ButtonState *setup_buttons(ButtonState *states) {
     // TODO: initialize 4 buttons
-
-    GPIOC->MODER |= (0<<27); // Set PIN13 as input
-    GPIOC->MODER |= (0<<26);
-
-    GPIOC->PUPDR |= (1<<26); // Set PIN13 as pull-up
-    GPIOC->PUPDR |= (0<<27);
     
+    ButtonState configButton = {
+        1, 1, 8
+    };
+
+    ButtonState idleButton = {
+        1, 1, 9
+    };
+    
+    ButtonState modulateButton = {
+        1, 1, 6
+    };
+    
+    ButtonState reduceButton = {
+        1, 1, 5
+    };
+
+    ButtonState userButton = {
+        1, 1, 13
+    };
+
+
+
+    states[0] = userButton;
+
+    // temp button PIN13 as input, set as pull-up
+    GPIOC->MODER |= (0<<27); 
+    GPIOC->MODER |= (0<<26);
+    GPIOC->PUPDR |= (1<<26);
+    GPIOC->PUPDR |= (0<<27);
+
+    // Config button PIN8 as input, set as pull-up
+    GPIOC->MODER |= (0<<17); 
+    GPIOC->MODER |= (0<<16);
+    GPIOC->PUPDR |= (0<<17); 
+    GPIOC->PUPDR |= (0<<16);
+    // Idle button PIN9 as input, set as pull-up
+    GPIOC->MODER |= (0<<18); 
+    GPIOC->MODER |= (0<<19);
+    GPIOC->PUPDR |= (0<<18); 
+    GPIOC->PUPDR |= (0<<19);
+    // Modulate button PIN6 as input, set as pull-up
+    GPIOC->MODER |= (0<<13); 
+    GPIOC->MODER |= (0<<12);
+    GPIOC->PUPDR |= (0<<13); 
+    GPIOC->PUPDR |= (0<<12);
+    // Reduce button PIN5 as input, set as pull-up
+    GPIOC->MODER |= (0<<11); 
+    GPIOC->MODER |= (0<<10);
+    GPIOC->PUPDR |= (0<<11); 
+    GPIOC->PUPDR |= (0<<10);
+
+    return states;
 }
 
 
@@ -106,14 +176,12 @@ int main()
 	// enable USART2 clock
 	RCC->APB1ENR |= RCC_APB1ENR_USART2EN;
 
-        
-    // Temp
-    GPIOA->MODER |= (1<<10); // Set PIN5 as output
-
-
-    
     setup_timer();
-    setup_buttons();
+
+    ButtonState initState[1];
+    ButtonState *states;
+
+    states = setup_buttons(initState);
 
 	// set PA2 & PA3 alternate functions to AF7 (USART2 RX/TX)
 	bits_val(GPIOA->AFR[0], 4, 2, 7); // PA2 -> USART2_TX
@@ -125,19 +193,18 @@ int main()
 	USART2->BRR  = baud(115200);
 	USART2->CR1 |= USART_CR1_UE | USART_CR1_RE | USART_CR1_TE;
 
-    int button_prev = 1;
-
 	while (1)
 	{
 		// wait for button state to change
 
   
-        int button_now = GPIOC->IDR & (1<<13) ? 1 : 0;
+        states[0].button_now = GPIOC->IDR & (1 << states[0].pin) ? 1 : 0;
+        // states[1].button_now = GPIOC->IDR & (1<<13) ? 1 : 0;
 
-		if (button_prev == 1  && button_now == 0) {            
+		if (states[0].button_prev == 1  && states[0].button_now == 0) {            
             lock_acquire();
 		}
 
-    button_prev = button_now;
+    states[0].button_prev = states[0].button_now;
 	}
 }
