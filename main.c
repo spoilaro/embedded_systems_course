@@ -50,7 +50,7 @@ void state_print(int localState) {
 
 void change_state() {
 
-                lock_acquire();
+                short_lock_acquire();
                 switch (localState)
                 {
                 case CONFIG:
@@ -73,20 +73,30 @@ void lock_release() {
     return;
 }
 
-// TODO: semaphore with 5 second timer
-// timer 2 IRQ handler (not important, toggles LED)
+// 
 void  __attribute__((interrupt("IRQ"))) TIM2_IRQHandler()
 {
     // Release semaphore lock
 	lock_release();
-    printf("Lock released\r\n");
+    printf("Long lock released\r\n");
 
     // clear interrupt flag
 	TIM2->SR &= ~TIM_SR_UIF;
     
 }
 
-void lock_acquire() {
+// 
+void  __attribute__((interrupt("IRQ"))) TIM3_IRQHandler()
+{
+    // Release semaphore lock
+	lock_release();
+    printf("Short lock released\r\n");
+
+    // clear interrupt flag
+	TIM3->SR &= ~TIM_SR_UIF;
+}
+
+void long_lock_acquire() {
     int check = 1;
     while(check) {
         while(timer_lock == 1);
@@ -95,7 +105,7 @@ void lock_acquire() {
         if(timer_lock == 0) {
            timer_lock = 1;
 
-            printf("Lock acquired!!!!\r\n");
+            printf("Long lock acquired!!!!\r\n");
             // Start timer
             TIM2->CNT = 0;
             TIM2->CR1 |= TIM_CR1_CEN;
@@ -108,16 +118,40 @@ void lock_acquire() {
     return;
 }
 
+void short_lock_acquire() {
+    int check = 1;
+    while(check) {
+        while(timer_lock == 1);
+        // Disable interrupts
+        __disable_irq();
+        if(timer_lock == 0) {
+           timer_lock = 1;
+
+            printf("Short lock acquired!!!!\r\n");
+            // Start timer
+            TIM3->CNT = 0;
+            TIM3->CR1 |= TIM_CR1_CEN;
+
+           check = 0;
+        }
+        // Enable interrupts again
+        __enable_irq();
+    }
+    return;
+}
+
 
 void setup_timer() {
-    // Enable TIM2
-    RCC->APB1ENR |= RCC_APB1ENR_TIM2EN;
+    // Enable TIM2 and TIM3
+    RCC->APB1ENR |= RCC_APB1ENR_TIM2EN | RCC_APB1ENR_TIM3EN;
 
     // Prescaler: 16 MHz / 1600 = 10 kHz
     TIM2->PSC = 1600 - 1;
+    TIM3->PSC = 1600 - 1;
 
-    // Auto-reload: 10 kHz * 5 s = 50,000
+    // Auto-reload: TIM2 -> 10 kHz * 5 s = 50,000, TIM3 -> 10kHz * 2,5 = 25000
     TIM2->ARR = 50000 - 1;
+    TIM3->ARR = 25000 - 1;
 
     // One-pulse mode
     TIM2->CR1 |= TIM_CR1_OPM | TIM_CR1_URS;
@@ -126,9 +160,17 @@ void setup_timer() {
     TIM2->DIER |= TIM_DIER_UIE;
 	TIM2->SR &= ~TIM_SR_UIF;
     TIM2->CNT = 0;
+
+    TIM3->DIER |= TIM_DIER_UIE; 
+	TIM3->CR1  |= TIM_CR1_OPM | TIM_CR1_URS;
+    TIM3->CNT = 0;
+	
     
     // Enable TIM2 interrupt in NVIC
     NVIC_EnableIRQ(TIM2_IRQn);
+    // Enable TIM3 interrupt in NVIC
+    NVIC_EnableIRQ(TIM3_IRQn);  
+
 }
 
 Button *setup_buttons(Button *buttons) {
