@@ -14,41 +14,57 @@ extern uint32_t SystemCoreClock; // system clock frequency
 #define CONFIG 0
 #define IDLE 1
 #define MODULATE 2
+
+// Button definitions for the system
+#define MODE 0
+#define TOGGLE 1
+#define INCREASE 2
 #define REDUCE 3
-#define TEST 4
 
 // Setup structs for input buttons
-typedef struct ButtonState {
+typedef struct Button {
     uint8_t button_prev;
     uint8_t button_now;
     uint8_t pin;
-    uint8_t status;
-} ButtonState;
+    uint8_t name;
+} Button;
 
 // Semaphore
 volatile int timer_lock = 0;
+volatile int localState = IDLE;
 
-void status_print(uint8_t status) {
+void state_print(int localState) {
 
-    printf("STATUS: %d\r\n");
-
-    switch (status) {
+    switch (localState) {
         case CONFIG:
             printf("State: CONFIG\r\n");
             break;
         case IDLE:
             printf("State: IDLE\r\n");
             break;
-        case MODULATE:
+        case INCREASE:
             printf("State: MODULATE\r\n");
             break;
-        case REDUCE:
-            printf("State: REDUCE\r\n");
-            break;
-        case TEST:
-            printf("State: TEST\r\n");
-            break;
     }
+}
+
+void change_state() {
+
+                lock_acquire();
+                switch (localState)
+                {
+                case CONFIG:
+                    localState = IDLE;
+                    break;
+                case IDLE:
+                    localState = MODULATE;
+                    break;
+                case MODULATE:
+                    localState = CONFIG;
+                    break;
+                }
+
+                state_print(localState);
 }
 
 // Function to release semaphore
@@ -115,62 +131,72 @@ void setup_timer() {
     NVIC_EnableIRQ(TIM2_IRQn);
 }
 
-ButtonState *setup_buttons(ButtonState *states) {
-    // TODO: initialize 4 buttons
+Button *setup_buttons(Button *buttons) {
+    // Buttons 5, 6 & 8 are additional hardware buttons soldered to the board.
+    // Button 13 is the built-in button of the board.
     
-    ButtonState configButton = {
-        1, 1, 8, 0
+    Button toggleButton = {
+        1, 1, 8, TOGGLE
     };
 
-    ButtonState idleButton = {
-        1, 1, 9, 1
-    };
-    
-    ButtonState modulateButton = {
-        1, 1, 6, 2
+    Button increaseButton = {
+        1, 1, 6, INCREASE
     };
     
-    ButtonState reduceButton = {
-        1, 1, 5, 3
+    Button reduceButton = {
+        1, 1, 5, REDUCE
     };
 
-    ButtonState userButton = {
-        1, 1, 13, 4
+    Button modeButton = {
+        1, 1, 13, MODE
     };
 
 
 
-    states[0] = userButton;
+    // states[0] = modeButton;
+    // states[1] = toggleButton;
+    // states[2] = increaseButton;
+    // states[3] = reduceButton;
+
+
+    buttons[0] = modeButton;
 
     // temp button PIN13 as input, set as pull-up
-    GPIOC->MODER |= (0<<27); 
     GPIOC->MODER |= (0<<26);
+    GPIOC->MODER |= (0<<27); 
     GPIOC->PUPDR |= (1<<26);
     GPIOC->PUPDR |= (0<<27);
 
     // Config button PIN8 as input, set as pull-up
-    GPIOC->MODER |= (0<<17); 
     GPIOC->MODER |= (0<<16);
+    GPIOC->MODER |= (0<<17); 
+    GPIOC->PUPDR |= (1<<16);
     GPIOC->PUPDR |= (0<<17); 
-    GPIOC->PUPDR |= (0<<16);
-    // Idle button PIN9 as input, set as pull-up
-    GPIOC->MODER |= (0<<18); 
-    GPIOC->MODER |= (0<<19);
-    GPIOC->PUPDR |= (0<<18); 
-    GPIOC->PUPDR |= (0<<19);
-    // Modulate button PIN6 as input, set as pull-up
-    GPIOC->MODER |= (0<<13); 
-    GPIOC->MODER |= (0<<12);
-    GPIOC->PUPDR |= (0<<13); 
-    GPIOC->PUPDR |= (0<<12);
-    // Reduce button PIN5 as input, set as pull-up
-    GPIOC->MODER |= (0<<11); 
-    GPIOC->MODER |= (0<<10);
-    GPIOC->PUPDR |= (0<<11); 
-    GPIOC->PUPDR |= (0<<10);
 
-    return states;
+    // Modulate button PIN6 as input, set as pull-up
+    GPIOC->MODER |= (0<<12);
+    GPIOC->MODER |= (0<<13); 
+    GPIOC->PUPDR |= (1<<12);
+    GPIOC->PUPDR |= (0<<13); 
+    
+    // Reduce button PIN5 as input, set as pull-up
+    GPIOC->MODER |= (0<<10);
+    GPIOC->MODER |= (0<<11); 
+    GPIOC->PUPDR |= (1<<10);
+    GPIOC->PUPDR |= (0<<11); 
+
+    return buttons;
 }
+
+void print_bits(uint32_t value)
+{
+    for (int i = 15; i >= 0; i--)
+    {
+        printf("%c", (value & (1U << i)) ? '1' : '0');
+    }
+    printf("\r\n");
+}
+
 
 
 int main()
@@ -182,12 +208,16 @@ int main()
 	// enable USART2 clock
 	RCC->APB1ENR |= RCC_APB1ENR_USART2EN;
 
+    GPIOC->AFR[1] &= ~(0xF << ((8 - 8) * 4)); // clear AF for PC8
+
     setup_timer();
 
-    ButtonState initState[1];
-    ButtonState *states;
+    Button initButtons[1];
+    Button *buttons;
 
-    states = setup_buttons(initState);
+    int localState = 1;
+
+    buttons = setup_buttons(initButtons);
 
 	// set PA2 & PA3 alternate functions to AF7 (USART2 RX/TX)
 	bits_val(GPIOA->AFR[0], 4, 2, 7); // PA2 -> USART2_TX
@@ -199,21 +229,37 @@ int main()
 	USART2->BRR  = baud(115200);
 	USART2->CR1 |= USART_CR1_UE | USART_CR1_RE | USART_CR1_TE;
 
+
+    // Setup calculation variables
+    float kp;
+    float ki;
+
 	while (1)
 	{
-		// wait for button state to change
 
-        for (int i=0; i<1; i++) {
-            states[i].button_now = GPIOC->IDR & (1 << states[i].pin) ? 1 : 0;
+        for (int i = 0; i < 1; i++)
+        {
+            buttons[i].button_now = GPIOC->IDR & (1 << buttons[i].pin) ? 1 : 0;
 
-            if (states[i].button_prev == 1  && states[i].button_now == 0) {            
-               lock_acquire();
-               status_print((uint8_t)states[i].status);
-                
+            if (buttons[i].button_prev == 1 && buttons[i].button_now == 0)
+            {
+                switch(buttons[i].name) {
+                    case CONFIG:
+                        change_state();
+                        break;
+                    case IDLE:
+                        printf("HELLO FROM IDLE \r\n");
+                        break;
+                    case INCREASE:
+                        printf("HELLO FROM INCREASE \r\n");
+                        break;
+                    case REDUCE:
+                        printf("HELLO FROM REDUCE \r\n");
+                        break;
+                }
             }
 
-            states[0].button_prev = states[0].button_now;
+            buttons[i].button_prev = buttons[i].button_now;
         }
-	}
-
+    }
 }
