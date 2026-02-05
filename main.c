@@ -50,7 +50,7 @@ void state_print(int localState) {
 
 void change_state() {
 
-                short_lock_acquire();
+                long_lock_acquire();
                 switch (localState)
                 {
                 case CONFIG:
@@ -178,7 +178,7 @@ Button *setup_buttons(Button *buttons) {
     // Button 13 is the built-in button of the board.
     
     Button toggleButton = {
-        1, 1, 8, TOGGLE
+        1, 1, 9, TOGGLE
     };
 
     Button increaseButton = {
@@ -202,6 +202,9 @@ Button *setup_buttons(Button *buttons) {
 
 
     buttons[0] = modeButton;
+    buttons[1] = toggleButton;
+    buttons[2] = increaseButton;
+    buttons[3] = reduceButton;
 
     // temp button PIN13 as input, set as pull-up
     GPIOC->MODER |= (0<<26);
@@ -209,11 +212,11 @@ Button *setup_buttons(Button *buttons) {
     GPIOC->PUPDR |= (1<<26);
     GPIOC->PUPDR |= (0<<27);
 
-    // Config button PIN8 as input, set as pull-up
-    GPIOC->MODER |= (0<<16);
-    GPIOC->MODER |= (0<<17); 
-    GPIOC->PUPDR |= (1<<16);
-    GPIOC->PUPDR |= (0<<17); 
+    // Config button PIN9 as input, set as pull-up
+    GPIOC->MODER |= (0<<18);
+    GPIOC->MODER |= (0<<19); 
+    GPIOC->PUPDR |= (1<<18);
+    GPIOC->PUPDR |= (0<<19); 
 
     // Modulate button PIN6 as input, set as pull-up
     GPIOC->MODER |= (0<<12);
@@ -254,7 +257,7 @@ int main()
 
     setup_timer();
 
-    Button initButtons[1];
+    Button initButtons[4];
     Button *buttons;
 
     int localState = 1;
@@ -279,7 +282,7 @@ int main()
 	while (1)
 	{
 
-        for (int i = 0; i < 1; i++)
+        for (int i = 0; i < 3; i++)
         {
             buttons[i].button_now = GPIOC->IDR & (1 << buttons[i].pin) ? 1 : 0;
 
@@ -289,8 +292,8 @@ int main()
                     case CONFIG:
                         change_state();
                         break;
-                    case IDLE:
-                        printf("HELLO FROM IDLE \r\n");
+                    case TOGGLE:
+                        printf("HELLO FROM TOGGLE \r\n");
                         break;
                     case INCREASE:
                         printf("HELLO FROM INCREASE \r\n");
