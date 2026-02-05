@@ -282,7 +282,7 @@ int main()
 	while (1)
 	{
 
-        for (int i = 0; i < 3; i++)
+        for (int i = 0; i < 4; i++)
         {
             buttons[i].button_now = GPIOC->IDR & (1 << buttons[i].pin) ? 1 : 0;
 
