@@ -33,6 +33,13 @@ typedef struct Button {
 volatile int timer_lock = 0;
 volatile int localState = IDLE;
 
+// Setup calculation variables
+float kp;
+float ki;
+// 0 for kp, 1 for ki
+int currentVariable = 0; 
+
+
 void state_print(int localState) {
 
     switch (localState) {
@@ -242,7 +249,51 @@ void print_bits(uint32_t value)
     printf("\r\n");
 }
 
+void handleToggleButton() {
+    switch (localState) {
+        case CONFIG:
+            currentVariable = 0 ? 1 : 0;
+            break;
+        break;
 
+        default:
+        break;
+    }
+}
+
+
+// TODO: change reference voltage in MODULATE state
+
+void handleIncreaseButton() {
+    switch (localState) {
+        case CONFIG:
+            currentVariable = 0 ? kp += 0.1 : ki += 0.1;
+            break;
+
+        case MODULATE:
+            // TODO: Implement modulate handling
+            break;
+        
+        case default:
+        break;
+        
+    }
+}
+
+void handleReduceButton() {
+    switch (localState) {
+        case CONFIG:
+            currentVariable = 0 ? kp -= 0.1 : ki -= 0.1;
+            break;
+
+        case MODULATE:
+            // TODO: Implement modulate handling
+            break;
+        
+        case default:
+            break;
+    }
+}
 
 int main()
 {
@@ -260,8 +311,6 @@ int main()
     Button initButtons[4];
     Button *buttons;
 
-    int localState = 1;
-
     buttons = setup_buttons(initButtons);
 
 	// set PA2 & PA3 alternate functions to AF7 (USART2 RX/TX)
@@ -275,9 +324,7 @@ int main()
 	USART2->CR1 |= USART_CR1_UE | USART_CR1_RE | USART_CR1_TE;
 
 
-    // Setup calculation variables
-    float kp;
-    float ki;
+    
 
 	while (1)
 	{
