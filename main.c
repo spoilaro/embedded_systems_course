@@ -34,8 +34,10 @@ volatile int timer_lock = 0;
 volatile int localState = IDLE;
 
 // Setup calculation variables
+// TODO: find default values for kp, ki and u_ref
 float kp;
 float ki;
+float u_ref;
 // 0 for kp, 1 for ki
 int currentVariable = 0; 
 
@@ -182,20 +184,47 @@ void setup_timer() {
 
 void setup_leds() {
 
-    // !!! Used LED pins PC8, PB5 & PB10 !!!
+    GPIOB->MODER &= ~(3 << 6 * 2);
+    GPIOB->MODER |= (0 << 12);
+    GPIOB->MODER |= (1 << 13);
 
-    // Set pin PC8 mode to be output
-    GPIOC->MODER |= (1<<16);
-    GPIOC->MODER |= (0<<17); 
+    // Set the alternate function to AF2 for TIM4_CH1
+    GPIOB->AFR[0] &= ~(0xF << (6 * 4)); // Clear alternate function
+    GPIOB->AFR[0] |= (2 << (6 * 4));    // Set to AF2
 
-    // Set pin PB5 mode to be output
-    GPIOB->MODER |= (1<<10);
-    GPIOB->MODER |= (0<<11); 
+    TIM4->PSC = 1600 - 1;
+    TIM4->ARR = 1000 - 1;
 
-    // Set pin PB10 mode to be output
-    GPIOB->MODER |= (1<<20);
-    GPIOB->MODER |= (0<<21); 
+    TIM4->CCR1 = 0;
+    TIM4->CCMR1 &= ~(7 << 4);
+    TIM4->CCMR1 |=  (6 << 4);
+    TIM4->CCMR1 |=  (1 << 3);  // preload enable
 
+    TIM4->CCER |= (1 << 0);    // enable CH1 output
+    TIM4->CR1  |= (1 << 7);    // ARPE
+    TIM4->CR1  |= (1 << 0);    // start timer
+
+
+    // Leaving the dimming and brightening code as reference here
+    // while (1)
+    // {
+
+    //     {
+    //         for (int d = 0; d <= 1000; d++)
+    //         {
+    //             TIM4->CCR1 = d;
+    //             for (volatile int i = 0; i < 2000; i++)
+    //                 ;
+    //         }
+
+    //         for (int d = 1000; d >= 0; d--)
+    //         {
+    //             TIM4->CCR1 = d;
+    //             for (volatile int i = 0; i < 2000; i++)
+    //                 ;
+    //         }
+    //     }
+    // }
 }
 
 Button *setup_buttons(Button *buttons) {
@@ -306,7 +335,7 @@ void handleReduceButton() {
 }
 
 
-void pi_controller() {
+float pi_controller() {
     
 }
 
@@ -318,15 +347,18 @@ void converter_model() {
     static float u_2 = 0;
     static float u_3 = 0;
 
+    // TODO: Call pi_controller to get u_in
     float u_in = 1.5;
 
+    // Update the states using the given equations
     i_1 = 0.9652*i_1 - 0.0172*u_1 + 0.0057*i_2 - 0.0058*u_2 + 0.0052*i_3 - 0.0251*u_3 + 0.0471*u_in;
     u_1 = 0.7732*i_1 + 0.1252*u_1 + 0.2315*i_2 + 0.0700*u_2 + 0.1282*i_3 + 0.7754*u_3 + 0.0377*u_in;
     i_2 = 0.8278*i_1 - 0.7522*u_1 - 0.0956*i_2 + 0.3299*u_2 - 0.4855*i_3 + 0.3915*u_3 + 0.0404*u_in;
     u_2 = 0.9948*i_1 + 0.2655*u_1 - 0.3848*i_2 + 0.4212*u_2 + 0.3927*i_3 + 0.2899*u_3 + 0.0485*u_in;
-    i_3 = 0.7648*i_1 - 0.4165*u_1 - 0.4855*i_2 - 0.3366*u_2 - 0.0986*i_3 + 0.7281*u_3 + 0.0373*u_in:
+    i_3 = 0.7648*i_1 - 0.4165*u_1 - 0.4855*i_2 - 0.3366*u_2 - 0.0986*i_3 + 0.7281*u_3 + 0.0373*u_in;
     u_3 = 1.1056*i_1 + 0.7587*u_1 + 0.1179*i_2 + 0.0748*u_2 - 0.2192*i_3 + 0.1491*u_3 + 0.0539*u_in;
 
+    printf("i_1: %f, u_1: %f, i_2: %f, u_2: %f, i_3: %f, u_3: %f\r\n", i_1, u_1, i_2, u_2, i_3, u_3);
 }
 
 int main()
@@ -340,39 +372,8 @@ int main()
 	// enable USART2 clock
 	RCC->APB1ENR |= RCC_APB1ENR_USART2EN;
 
-
-    ////////////////////////////////////////
-
-    // Enabled timer for TIM4 which is used as PWM output
+    // Enable TIM4 which is used to control PWM for led
     RCC->APB1ENR |= RCC_APB1ENR_TIM4EN;
-    GPIOB->MODER &= ~(3 << 6 * 2);
-    GPIOB->MODER |= (2 << 6 * 2);
-    TIM4->PSC = 16 - 1;
-    TIM4->ARR = 1000 - 1;
-
-    TIM4->CCR1 = 0;
-    TIM4->CCMR1 &= ~(7 << 4);
-    TIM4->CCMR1 |=  (6 << 4);
-    TIM4->CCMR1 |=  (1 << 3);  // preload enable
-
-    TIM4->CCER |= (1 << 0);    // enable CH1 output
-    TIM4->CR1  |= (1 << 7);    // ARPE
-    TIM4->CR1  |= (1 << 0);    // start timer
-
-    {
-        for (int d = 0; d <= 1000; d++)
-        {
-            TIM4->CCR1 = d;
-            for (volatile int i = 0; i < 2000; i++);
-        }
-
-        for (int d = 1000; d >= 0; d--)
-        {
-            TIM4->CCR1 = d;
-            for (volatile int i = 0; i < 2000; i++);
-        }
-    }
-    ////////////////////////////////////////
 
     GPIOC->AFR[1] &= ~(0xF << ((8 - 8) * 4)); // clear AF for PC8
 
