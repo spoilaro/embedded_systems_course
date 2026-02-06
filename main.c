@@ -180,6 +180,24 @@ void setup_timer() {
 
 }
 
+void setup_leds() {
+
+    // !!! Used LED pins PC8, PB5 & PB10 !!!
+
+    // Set pin PC8 mode to be output
+    GPIOC->MODER |= (1<<16);
+    GPIOC->MODER |= (0<<17); 
+
+    // Set pin PB5 mode to be output
+    GPIOB->MODER |= (1<<10);
+    GPIOB->MODER |= (0<<11); 
+
+    // Set pin PB10 mode to be output
+    GPIOB->MODER |= (1<<20);
+    GPIOB->MODER |= (0<<21); 
+
+}
+
 Button *setup_buttons(Button *buttons) {
     // Buttons 5, 6 & 8 are additional hardware buttons soldered to the board.
     // Button 13 is the built-in button of the board.
@@ -255,9 +273,6 @@ void handleToggleButton() {
             currentVariable = 0 ? 1 : 0;
             break;
         break;
-
-        default:
-        break;
     }
 }
 
@@ -267,15 +282,12 @@ void handleToggleButton() {
 void handleIncreaseButton() {
     switch (localState) {
         case CONFIG:
-            currentVariable = 0 ? kp += 0.1 : ki += 0.1;
+            // currentVariable = 0 ? kp += 0.1 : ki += 0.1;
             break;
 
         case MODULATE:
             // TODO: Implement modulate handling
             break;
-        
-        case default:
-        break;
         
     }
 }
@@ -283,16 +295,38 @@ void handleIncreaseButton() {
 void handleReduceButton() {
     switch (localState) {
         case CONFIG:
-            currentVariable = 0 ? kp -= 0.1 : ki -= 0.1;
+            // currentVariable = 0 ? kp -= 0.1 : ki -= 0.1;
             break;
 
         case MODULATE:
             // TODO: Implement modulate handling
             break;
         
-        case default:
-            break;
     }
+}
+
+
+void pi_controller() {
+    
+}
+
+void converter_model() {
+    static float i_1 = 0;
+    static float i_2 = 0;
+    static float i_3 = 0; 
+    static float u_1 = 0;
+    static float u_2 = 0;
+    static float u_3 = 0;
+
+    float u_in = 1.5;
+
+    i_1 = 0.9652*i_1 - 0.0172*u_1 + 0.0057*i_2 - 0.0058*u_2 + 0.0052*i_3 - 0.0251*u_3 + 0.0471*u_in;
+    u_1 = 0.7732*i_1 + 0.1252*u_1 + 0.2315*i_2 + 0.0700*u_2 + 0.1282*i_3 + 0.7754*u_3 + 0.0377*u_in;
+    i_2 = 0.8278*i_1 - 0.7522*u_1 - 0.0956*i_2 + 0.3299*u_2 - 0.4855*i_3 + 0.3915*u_3 + 0.0404*u_in;
+    u_2 = 0.9948*i_1 + 0.2655*u_1 - 0.3848*i_2 + 0.4212*u_2 + 0.3927*i_3 + 0.2899*u_3 + 0.0485*u_in;
+    i_3 = 0.7648*i_1 - 0.4165*u_1 - 0.4855*i_2 - 0.3366*u_2 - 0.0986*i_3 + 0.7281*u_3 + 0.0373*u_in:
+    u_3 = 1.1056*i_1 + 0.7587*u_1 + 0.1179*i_2 + 0.0748*u_2 - 0.2192*i_3 + 0.1491*u_3 + 0.0539*u_in;
+
 }
 
 int main()
@@ -301,12 +335,49 @@ int main()
 	RCC->AHB1ENR |= RCC_AHB1ENR_GPIOCEN;
 	// enable GPIOA clock
 	RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN;
+    // Enable GPIOB clock
+	RCC->AHB1ENR |= RCC_AHB1ENR_GPIOBEN;
 	// enable USART2 clock
 	RCC->APB1ENR |= RCC_APB1ENR_USART2EN;
+
+
+    ////////////////////////////////////////
+
+    // Enabled timer for TIM4 which is used as PWM output
+    RCC->APB1ENR |= RCC_APB1ENR_TIM4EN;
+    GPIOB->MODER &= ~(3 << 6 * 2);
+    GPIOB->MODER |= (2 << 6 * 2);
+    TIM4->PSC = 16 - 1;
+    TIM4->ARR = 1000 - 1;
+
+    TIM4->CCR1 = 0;
+    TIM4->CCMR1 &= ~(7 << 4);
+    TIM4->CCMR1 |=  (6 << 4);
+    TIM4->CCMR1 |=  (1 << 3);  // preload enable
+
+    TIM4->CCER |= (1 << 0);    // enable CH1 output
+    TIM4->CR1  |= (1 << 7);    // ARPE
+    TIM4->CR1  |= (1 << 0);    // start timer
+
+    {
+        for (int d = 0; d <= 1000; d++)
+        {
+            TIM4->CCR1 = d;
+            for (volatile int i = 0; i < 2000; i++);
+        }
+
+        for (int d = 1000; d >= 0; d--)
+        {
+            TIM4->CCR1 = d;
+            for (volatile int i = 0; i < 2000; i++);
+        }
+    }
+    ////////////////////////////////////////
 
     GPIOC->AFR[1] &= ~(0xF << ((8 - 8) * 4)); // clear AF for PC8
 
     setup_timer();
+    setup_leds();
 
     Button initButtons[4];
     Button *buttons;
@@ -323,8 +394,6 @@ int main()
 	USART2->BRR  = baud(115200);
 	USART2->CR1 |= USART_CR1_UE | USART_CR1_RE | USART_CR1_TE;
 
-
-    
 
 	while (1)
 	{
