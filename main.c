@@ -21,7 +21,12 @@ extern uint32_t SystemCoreClock; // system clock frequency
 #define INCREASE 2
 #define REDUCE 3
 
-// Setup structs for input buttons
+// 'K_DELTA' describes how much 'kp' and 'ki' are increased or decreased with one step.
+#define K_DELTA 0.5
+
+// The program stores buttons as 'Button' structs. 'Button' includes required
+// fields for checking if the button is pressed and also the pin mask in order
+// to access it.
 typedef struct Button {
     uint8_t button_prev;
     uint8_t button_now;
@@ -33,13 +38,21 @@ typedef struct Button {
 volatile int timer_lock = 0;
 volatile int localState = IDLE;
 
-// Setup calculation variables
-// TODO: find default values for kp, ki and u_ref
-float kp;
-float ki;
-float u_ref;
+float reference_voltage = 3.3;
+
+// TODO: Is the comment relevant?
 // 0 for kp, 1 for ki
 int currentVariable = 0; 
+
+// PI-säätimen tietorakenne
+typedef struct {
+    float Kp;           // Proportionaalinen vahvistus
+    float Ki;           // Integroiva vahvistus
+    float Ts;           // Näytteenottoväli (sekunteina)
+    float integral;     // Integroiva termi (muisti)
+    float u_min;        // Ulostulon alaraja (esim. 0.0V)
+    float u_max;        // Ulostulon yläraja (esim. 12.0V)
+} PI_Controller;
 
 
 void state_print(int localState) {
@@ -248,13 +261,6 @@ Button *setup_buttons(Button *buttons) {
     };
 
 
-
-    // states[0] = modeButton;
-    // states[1] = toggleButton;
-    // states[2] = increaseButton;
-    // states[3] = reduceButton;
-
-
     buttons[0] = modeButton;
     buttons[1] = toggleButton;
     buttons[2] = increaseButton;
@@ -335,11 +341,62 @@ void handleReduceButton() {
 }
 
 
-float pi_controller() {
-    
+void PI_Init(PI_Controller *pi, float Kp, float Ki, float Ts, float u_min, float u_max) {
+    /// Function for initializing the PI_Controller structure
+    ///
+    ///  PI_Controller *pi      Pointer to which the PI_Controller struct is assigned
+    ///  float Kp               Proportional part
+    ///  float Ki               Integral part
+    ///  float Ts               Measurement interval - 2 Hz
+    ///  float u_min            Minimum possible value for the voltage
+    ///  float u_max            Maximum possible value for the voltage
+
+
+    pi->Kp = Kp;
+    pi->Ki = Ki;
+    pi->Ts = Ts;
+    pi->integral = 0.0f;
+    pi->u_min = u_min;
+    pi->u_max = u_max;
 }
 
-void converter_model() {
+float PI_Update(PI_Controller *pi, float measurement) {
+    /// Function for running the updating algorithm for PI_Controller. The
+    /// function returns the new calculated voltage which is given to the
+    /// converter model.
+    ///   
+    /// PI_Controller *pi       Pointer to which the PI_Controller struct is accessible from
+    /// float setpoint          Desired reference voltage
+    /// float measurement       Actual measured voltage got from converter model
+    
+    float error = reference_voltage - measurement;
+
+    // Proportional part
+    float P = pi->Kp * error;
+
+    // Integral part
+    pi->integral += pi->Ki * pi->Ts * error;
+
+    // Output voltage
+    float u = P + pi->integral;
+
+    // Saturation and anti-windup handling
+    if (u > pi->u_max) {
+        u = pi->u_max;
+        pi->integral -= pi->Ki * pi->Ts * error;
+    } else if (u < pi->u_min) {
+        u = pi->u_min;
+        pi->integral -= pi->Ki * pi->Ts * error;
+    }
+
+    return u;
+}
+
+
+
+float converter_model(PI_Controller *pi_controller) {
+    // Function for calculating the DC-converter output voltage. The return value is used to set LED brightness.
+    // Calls: PI_Update() for input voltage value
     static float i_1 = 0;
     static float i_2 = 0;
     static float i_3 = 0; 
@@ -347,8 +404,11 @@ void converter_model() {
     static float u_2 = 0;
     static float u_3 = 0;
 
-    // TODO: Call pi_controller to get u_in
-    float u_in = 1.5;
+    static float measurement = 0.0f;
+
+    float u_in = PI_Update(pi_controller, measurement);
+
+    measurement += (u_in * 0.1f); 
 
     // Update the states using the given equations
     i_1 = 0.9652*i_1 - 0.0172*u_1 + 0.0057*i_2 - 0.0058*u_2 + 0.0052*i_3 - 0.0251*u_3 + 0.0471*u_in;
@@ -358,7 +418,8 @@ void converter_model() {
     i_3 = 0.7648*i_1 - 0.4165*u_1 - 0.4855*i_2 - 0.3366*u_2 - 0.0986*i_3 + 0.7281*u_3 + 0.0373*u_in;
     u_3 = 1.1056*i_1 + 0.7587*u_1 + 0.1179*i_2 + 0.0748*u_2 - 0.2192*i_3 + 0.1491*u_3 + 0.0539*u_in;
 
-    printf("i_1: %f, u_1: %f, i_2: %f, u_2: %f, i_3: %f, u_3: %f\r\n", i_1, u_1, i_2, u_2, i_3, u_3);
+    // printf("i_1: %f, u_1: %f, i_2: %f, u_2: %f, i_3: %f, u_3: %f\r\n", i_1, u_1, i_2, u_2, i_3, u_3);
+    return u_3;
 }
 
 int main()
@@ -395,6 +456,11 @@ int main()
 	USART2->BRR  = baud(115200);
 	USART2->CR1 |= USART_CR1_UE | USART_CR1_RE | USART_CR1_TE;
 
+    PI_Controller pi_controller;
+    
+    // Initial values for PI controller
+    PI_Init(&pi_controller, 1.0, 0.5, 0.5, 0.1, 3.3);
+    
 
 	while (1)
 	{
@@ -420,8 +486,28 @@ int main()
                         break;
                 }
             }
-
             buttons[i].button_prev = buttons[i].button_now;
+        }
+    
+        switch(localState) {
+            case IDLE:
+                // In case of IDLE state, nothing is done and the loop can be continued
+                // Converter is in off state.
+                break;
+
+            case MODULATE:
+                // Change led, call PI_CONTROLLER
+                float output_voltage = converter_model(&pi_controller);
+
+                sleep(1);
+
+                printf("Ouput Voltage: %f\r\n", output_voltage);
+
+                break;
+            case CONFIG:
+                // Shut off MODULATE LED
+                // Activate CONFIG LED
+                break;
         }
     }
 }
