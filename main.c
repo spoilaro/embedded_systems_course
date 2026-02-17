@@ -36,22 +36,23 @@ typedef struct Button {
 
 // Semaphore
 volatile int timer_lock = 0;
-volatile int localState = IDLE;
+volatile int localState = CONFIG;
 
-float reference_voltage = 3.3;
+float reference_voltage = 1.5;
 
-// TODO: Is the comment relevant?
-// 0 for kp, 1 for ki
-int currentVariable = 0; 
+#define KP_ACTIVE 0
+#define KI_ACTIVE 1
 
-// PI-säätimen tietorakenne
+int currentVariable = KP_ACTIVE; 
+
+// PI controller values
 typedef struct {
-    float Kp;           // Proportionaalinen vahvistus
-    float Ki;           // Integroiva vahvistus
-    float Ts;           // Näytteenottoväli (sekunteina)
-    float integral;     // Integroiva termi (muisti)
-    float u_min;        // Ulostulon alaraja (esim. 0.0V)
-    float u_max;        // Ulostulon yläraja (esim. 12.0V)
+    float Kp;           // Proportional part
+    float Ki;           // Integral part
+    float Ts;           // Measurement interval
+    float integral;     
+    float u_min;        // Lower bound for output voltage
+    float u_max;        // Upper bound for output voltage
 } PI_Controller;
 
 
@@ -305,8 +306,12 @@ void print_bits(uint32_t value)
 void handleToggleButton() {
     switch (localState) {
         case CONFIG:
-            currentVariable = 0 ? 1 : 0;
-            break;
+
+            if (currentVariable == KP_ACTIVE) {
+                currentVariable = KI_ACTIVE;
+            } else {
+                currentVariable = KP_ACTIVE;
+            }
         break;
     }
 }
@@ -314,29 +319,28 @@ void handleToggleButton() {
 
 // TODO: change reference voltage in MODULATE state
 
-void handleIncreaseButton() {
+void handleIncreaseButton(PI_Controller *pi_controller) {
     switch (localState) {
         case CONFIG:
-            // currentVariable = 0 ? kp += 0.1 : ki += 0.1;
+            if(currentVariable == KP_ACTIVE) {
+                pi_controller->Kp += K_DELTA;
+            } else {
+                pi_controller->Ki += K_DELTA;
+            }
             break;
 
-        case MODULATE:
-            // TODO: Implement modulate handling
-            break;
-        
     }
 }
 
-void handleReduceButton() {
+void handleReduceButton(PI_Controller *pi_controller) {
     switch (localState) {
         case CONFIG:
-            // currentVariable = 0 ? kp -= 0.1 : ki -= 0.1;
+            if(currentVariable == KP_ACTIVE) {
+                pi_controller->Kp -= K_DELTA;
+            } else {
+                pi_controller->Ki -= K_DELTA;
+            }
             break;
-
-        case MODULATE:
-            // TODO: Implement modulate handling
-            break;
-        
     }
 }
 
@@ -388,27 +392,20 @@ float PI_Update(PI_Controller *pi, float measurement) {
         u = pi->u_min;
         pi->integral -= pi->Ki * pi->Ts * error;
     }
-
+ 
     return u;
 }
 
 
 
-float converter_model(PI_Controller *pi_controller) {
+float converter_model(float u_in) {
     // Function for calculating the DC-converter output voltage. The return value is used to set LED brightness.
-    // Calls: PI_Update() for input voltage value
     static float i_1 = 0;
     static float i_2 = 0;
     static float i_3 = 0; 
     static float u_1 = 0;
     static float u_2 = 0;
     static float u_3 = 0;
-
-    static float measurement = 0.0f;
-
-    float u_in = PI_Update(pi_controller, measurement);
-
-    measurement += (u_in * 0.1f); 
 
     // Update the states using the given equations
     i_1 = 0.9652*i_1 - 0.0172*u_1 + 0.0057*i_2 - 0.0058*u_2 + 0.0052*i_3 - 0.0251*u_3 + 0.0471*u_in;
@@ -418,6 +415,7 @@ float converter_model(PI_Controller *pi_controller) {
     i_3 = 0.7648*i_1 - 0.4165*u_1 - 0.4855*i_2 - 0.3366*u_2 - 0.0986*i_3 + 0.7281*u_3 + 0.0373*u_in;
     u_3 = 1.1056*i_1 + 0.7587*u_1 + 0.1179*i_2 + 0.0748*u_2 - 0.2192*i_3 + 0.1491*u_3 + 0.0539*u_in;
 
+    
     // printf("i_1: %f, u_1: %f, i_2: %f, u_2: %f, i_3: %f, u_3: %f\r\n", i_1, u_1, i_2, u_2, i_3, u_3);
     return u_3;
 }
@@ -460,6 +458,8 @@ int main()
     
     // Initial values for PI controller
     PI_Init(&pi_controller, 1.0, 0.5, 0.5, 0.1, 3.3);
+
+    float output_voltage = reference_voltage;
     
 
 	while (1)
@@ -476,13 +476,16 @@ int main()
                         change_state();
                         break;
                     case TOGGLE:
-                        printf("HELLO FROM TOGGLE \r\n");
+                        handleToggleButton();
+                        printf("Active variable: %d\r\n", currentVariable);
                         break;
                     case INCREASE:
-                        printf("HELLO FROM INCREASE \r\n");
+                        handleIncreaseButton(&pi_controller);
+                        // printf("HELLO FROM INCREASE \r\n");
                         break;
                     case REDUCE:
-                        printf("HELLO FROM REDUCE \r\n");
+                        handleReduceButton(&pi_controller);
+                        // printf("HELLO FROM REDUCE \r\n");
                         break;
                 }
             }
@@ -497,16 +500,17 @@ int main()
 
             case MODULATE:
                 // Change led, call PI_CONTROLLER
-                float output_voltage = converter_model(&pi_controller);
-
-                sleep(1);
-
+                output_voltage = converter_model(output_voltage);
+                output_voltage = PI_Update(&pi_controller, output_voltage);
+                sleep(1); 
                 printf("Ouput Voltage: %f\r\n", output_voltage);
 
                 break;
             case CONFIG:
                 // Shut off MODULATE LED
                 // Activate CONFIG LED
+                printf("KP: %f ----- KI: %f \r\n", pi_controller.Kp, pi_controller.Ki);
+                sleep(1);
                 break;
         }
     }
