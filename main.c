@@ -1,5 +1,4 @@
 #include <stdio.h> // we can now use this
-#include <sleep.h>
 #include <stdlib.h>
 #include <bitwise.h>
 #include <stm32f4xx.h>
@@ -82,23 +81,33 @@ void state_print(int localState) {
     }
 }
 
-void change_state() {
+void change_state()
+{
 
-                lock_acquire();
-                switch (localState)
-                {
-                case CONFIG:
-                    localState = IDLE;
-                    break;
-                case IDLE:
-                    localState = MODULATE;
-                    break;
-                case MODULATE:
-                    localState = CONFIG;
-                    break;
-                }
+    lock_acquire();
+    switch (localState)
+    {
+    case CONFIG:
+        localState = IDLE;
+        GPIOB->ODR |= (1 << 10);
+        GPIOC->ODR &= ~(1 << 8);
+        break;
 
-                state_print(localState);
+    case IDLE:
+        localState = MODULATE;
+        GPIOB->ODR &= ~(1 << 10);
+        TIM4->CR1 |= TIM_CR1_CEN;
+        break;
+
+    case MODULATE:
+        localState = CONFIG;
+        GPIOC->ODR |= (1 << 8);
+        TIM4->CR1 &= ~(TIM_CR1_CEN);
+        TIM4->CCR1 = 0;
+        break;
+    }
+
+    state_print(localState);
 }
 
 // Function to release semaphore
@@ -107,26 +116,24 @@ void lock_release() {
     return;
 }
 
-// 
+// Interrupt routine for timer semaphore
 void  __attribute__((interrupt("IRQ"))) TIM2_IRQHandler()
 {
     // Release semaphore lock
 	lock_release();
-    printf("Long lock released\r\n");
+    printf("Lock released\r\n");
 
     // clear interrupt flag
 	TIM2->SR &= ~TIM_SR_UIF;
     
 }
 
-// 
+// Interrupt routine for PI controller
 void  __attribute__((interrupt("IRQ"))) TIM3_IRQHandler()
 {
     // Run converter model
     output_voltage = converter_model(output_voltage);
     output_voltage = PI_Update(&pi_controller, output_voltage);
-
-    // TIM3->CCR1 = output_voltage * 250;
 
     // clear interrupt flag
 	TIM3->SR &= ~TIM_SR_UIF;
@@ -144,7 +151,7 @@ void lock_acquire() {
         if(timer_lock == 0) {
            timer_lock = 1;
 
-            printf("Long lock acquired!!!!\r\n");
+            printf("Lock acquired!!!!\r\n");
             // Start timer
             TIM2->CNT = 0;
             TIM2->CR1 |= TIM_CR1_CEN;
@@ -192,16 +199,15 @@ void setup_timer() {
 
 void setup_leds() {
 
-    // TODO: Use this after led test
-    // GPIOB->MODER &= ~(3 << 6 * 2);
+    // PB6 LED = MODULATE LED, RED COLOR
     GPIOB->MODER |= (0 << 12);
     GPIOB->MODER |= (1 << 13);
 
-    // PB10 LED = 
+    // PB10 LED = IDLE LED, BLUE LED
     GPIOB->MODER |= (1 << 20);
     GPIOB->MODER |= (0 << 21);
     
-    // PC8 LED
+    // PC8 LED = CONFIG LED, GREEN LED
     GPIOC->MODER |= (1 << 16);
     GPIOC->MODER |= (0 << 17);
 
@@ -213,7 +219,7 @@ void setup_leds() {
     TIM4->PSC = 1600 - 1;
     TIM4->ARR = 1000 - 1;
 
-    TIM4->CCR1 = 500; // Duty cycle
+    TIM4->CCR1 = 0; // Duty cycle
 
     TIM4->CCMR1 &= ~TIM_CCMR1_OC1M; // Clear PWM mode bits
     TIM4->CCMR1 |= (6 << TIM_CCMR1_OC1M_Pos); // Set to PWM mode 1
@@ -223,18 +229,8 @@ void setup_leds() {
     TIM4->CCER |= TIM_CCER_CC1E;    // enable CH1 output
 
     TIM4->CR1 |= TIM_CR1_CEN;
-    // TIM4->CR1  |= (1 << 0);    // start timer
+    
 
-    // TIM4->CCMR1 &= ~(7 << 4);
-    // TIM4->CCMR1 |=  (6 << 4);
-    // TIM4->CCMR1 |=  (1 << 3);  // preload enable
-
-    // TIM4->CR1  |= (1 << 7);    // ARPE
-    // TIM4->CR1  |= (1 << 0);    // start timer
-
-    /* GPIOB->ODR |= (1 << 6);
-    GPIOB->ODR |= (1 << 10);
-    GPIOC->ODR |= (1 << 8); */
 }
 
 Button *setup_buttons(Button *buttons) {
@@ -305,7 +301,6 @@ void handleToggleButton() {
 }
 
 
-// TODO: change reference voltage in MODULATE state
 
 void handleIncreaseButton(PI_Controller *pi_controller) {
     switch (localState) {
@@ -402,9 +397,7 @@ float converter_model(float u_in) {
     u_2 = 0.9948*i_1 + 0.2655*u_1 - 0.3848*i_2 + 0.4212*u_2 + 0.3927*i_3 + 0.2899*u_3 + 0.0485*u_in;
     i_3 = 0.7648*i_1 - 0.4165*u_1 - 0.4855*i_2 - 0.3366*u_2 - 0.0986*i_3 + 0.7281*u_3 + 0.0373*u_in;
     u_3 = 1.1056*i_1 + 0.7587*u_1 + 0.1179*i_2 + 0.0748*u_2 - 0.2192*i_3 + 0.1491*u_3 + 0.0539*u_in;
-
     
-    // printf("i_1: %f, u_1: %f, i_2: %f, u_2: %f, i_3: %f, u_3: %f\r\n", i_1, u_1, i_2, u_2, i_3, u_3);
     return u_3;
 }
 
@@ -466,15 +459,20 @@ int main()
                     case TOGGLE:
                         lock_acquire();
                         handleToggleButton();
-                        printf("Active variable: %d\r\n", currentVariable);
+
+                        if (currentVariable == KP_ACTIVE) {
+                            printf("KP is active\r\n");
+                        } else {
+                            printf("KI is active\r\n");
+                        }
                         break;
                     case INCREASE:
+                        printf("KP: %f ----- KI: %f \r\n", pi_controller.Kp, pi_controller.Ki);
                         handleIncreaseButton(&pi_controller);
-                        // printf("HELLO FROM INCREASE \r\n");
                         break;
                     case REDUCE:
+                        printf("KP: %f ----- KI: %f \r\n", pi_controller.Kp, pi_controller.Ki);
                         handleReduceButton(&pi_controller);
-                        // printf("HELLO FROM REDUCE \r\n");
                         break;
                 }
             }
@@ -488,17 +486,9 @@ int main()
                 break;
 
             case MODULATE:
-            
-                // TIM3->CCR1 = output_voltage * 250;
                 TIM4->CCR1 = (int)(output_voltage * 250);
-                printf("Ouput Voltage: %f\r\n", output_voltage);
-
                 break;
             case CONFIG:
-                // Shut off MODULATE LED
-                // Activate CONFIG LED
-                printf("KP: %f ----- KI: %f \r\n", pi_controller.Kp, pi_controller.Ki);
-                sleep(1);
                 break;
         }
     }
